@@ -1,0 +1,34 @@
+version: '1'
+services:
+  shopware:
+    hostname: shopware
+    container_name: shopware
+    build: .
+    image: shopware
+    ports:
+      - "80:8080"
+    user: "100000"
+    environment:
+        SUPERVISORD_LOGLEVEL: debug
+        SHOPWARE_DB_HOST: mysql
+        SHOPWARE_DB_PASSWORD: EnvVarHere
+        SHOPWARE_DB_USER: username
+        SHOPWARE_DB_NAME: shopware
+    depends_on:
+      - mysql
+    links:
+      - mysql
+
+  mysql:
+    hostname: mysql
+    container_name: mysql
+    image: 1and1internet/ubuntu-16-nginx-php-phpmyadmin-mariadb-10
+    user: "100000"
+    ports:
+        - "8081:8080"
+        - "3306:3306"
+    environment:
+      MYSQL_USER: username
+      MYSQL_PASSWORD: EnvVarHere
+      MYSQL_DATABASE: shopware
+      MYSQL_ROOT_PASSWORD: rootroot1!

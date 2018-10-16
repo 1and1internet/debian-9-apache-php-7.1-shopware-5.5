@@ -1,0 +1,127 @@
+#!/bin/bash
+
+if [ -n "$MYSQL_PORT_3306_TCP" ]; then
+  if [ -z "$SHOPWARE_DB_HOST" ]; then
+    SHOPWARE_DB_HOST='mysql'
+    echo "DB = $SHOPWARE_DB_HOST"
+  else
+    echo >&2 'warning: both SHOPWARE_DB_HOST and MYSQL_PORT_3306_TCP found'
+    echo >&2 "  Connecting to SHOPWARE_DB_HOST ($SHOPWARE_DB_HOST)"
+    echo >&2 '  instead of the linked mysql container'
+  fi
+fi
+
+if [ -z "$SHOPWARE_DB_HOST" ]; then
+  echo >&2 'error: missing SHOPWARE_DB_HOST and MYSQL_PORT_3306_TCP environment variables'
+  echo >&2 '  Did you forget to --link some_mysql_container:mysql or set an external db'
+  echo >&2 '  with -e SHOPWARE_DB_HOST=hostname:port?'
+  exit 1
+fi
+
+  # if we're linked to MySQL and thus have credentials already, let's use them
+  : ${SHOPWARE_DB_USER:=${MYSQL_ENV_MYSQL_USER:-root}}
+  if [ "$SHOPWARE_DB_USER" = 'root' ]; then
+    : ${SHOPWARE_DB_PASSWORD:=$MYSQL_ENV_MYSQL_ROOT_PASSWORD}
+  fi
+  : ${SHOPWARE_DB_PASSWORD:=$MYSQL_ENV_MYSQL_PASSWORD}
+  : ${SHOPWARE_DB_NAME:=${MYSQL_ENV_MYSQL_DATABASE:-wordpress}}
+
+if [ -z "$SHOPWARE_DB_PASSWORD" ]; then
+  echo >&2 'error: missing required SHOPWARE_DB_PASSWORD environment variable'
+  echo >&2 '  Did you forget to -e SHOPWARE_DB_PASSWORD=... ?'
+  echo >&2
+  echo >&2 '  (Also of interest might be SHOPWARE_DB_USER and SHOPWARE_DB_NAME.)'
+  exit 1
+fi
+
+if [  -d /var/www/html ]; then
+  mkdir /var/www/html
+fi
+
+if ! [ -e shopware.php ]; then
+  echo >&2 "Shopware not found in $(pwd) - copying now..."
+  rm index.html
+  rm phpinfo.php
+  if [ "$(ls -A)" ]; then
+    echo >&2 "WARNING: $(pwd) is not empty - press Ctrl+C now if this is an error!"
+    ( set -x; ls -A; sleep 10 )
+  fi
+  unzip /usr/src/shopware.zip -d .
+  echo >&2 "Complete! Shopware has been successfully copied to $(pwd)"
+fi
+
+# see http://stackoverflow.com/a/2705678/433558
+sed_escape_lhs() {
+  echo "$@" | sed 's/[]\/$*.^|[]/\\&/g'
+}
+sed_escape_rhs() {
+  echo "$@" | sed 's/[\/&]/\\&/g'
+}
+set_config() {
+  key=$(sed_escape_lhs "$1")
+  value=$(sed_escape_rhs "$2")
+  echo >&2 "KEY: $1|$key"
+  echo >&2 "VALUE: $2|$value"
+  sed -ri "s/$key/$value/" config.php
+}
+
+
+echo >&2 "Overwriting installer database defaults"
+TERM=dumb php -- "$SHOPWARE_DB_HOST" "$SHOPWARE_DB_USER" "$SHOPWARE_DB_PASSWORD" "$SHOPWARE_DB_NAME" <<'EOPHP'
+<?php
+// Updating install dir
+$installFile = file_get_contents('recovery/install/src/app.php');
+if (strpos('EDITED BY INSTALLER', $installFile) === false) {
+    // Add some code to initiate the session with the correct settings
+    $replacement = '
+    $_SESSION[\'parameters\'] = [];
+    // EDITED BY INSTALLER
+    $_SESSION[\'parameters\'][\'c_database_host\'] = getenv(\'SHOPWARE_DB_HOST\');
+    $_SESSION[\'parameters\'][\'c_database_password\'] = getenv(\'SHOPWARE_DB_PASSWORD\');
+    $_SESSION[\'parameters\'][\'c_database_user\'] = getenv(\'SHOPWARE_DB_USER\');
+    $_SESSION[\'parameters\'][\'c_database_port\'] = 3306;
+    $_SESSION[\'parameters\'][\'c_database_schema\'] = getenv(\'SHOPWARE_DB_NAME\');
+';
+    $placeholder = '$_SESSION[\'parameters\'] = [];';
+    $newContent = str_replace($placeholder, $replacement, $installFile);
+    file_put_contents('recovery/install/src/app.php', $newContent);
+}
+
+// Now update the config
+$configWriterFile = file_get_contents('recovery/install/src/Service/ConfigWriter.php');
+if (strpos($configWriterFile, 'EDITED BY INSTALLER') === false) {
+    // Add some code to initiate the session with the correct settings
+    $replacement = '
+            \'db\' => [],
+            // EDITED BY INSTALLER
+            \'trustedproxies\' => [\'0.0.0.0/0\'],
+';
+    $placeholder = '\'db\' => [],';
+    $newContent = str_replace($placeholder, $replacement, $configWriterFile);
+    file_put_contents('recovery/install/src/Service/ConfigWriter.php', $newContent);
+}
+
+// database might not exist, so let's try creating it (just to be safe)
+$stderr = fopen('php://stderr', 'w');
+$host = $argv[1];
+$port = 3306;
+$maxTries = 10;
+do {
+  $mysql = new mysqli($host, $argv[2], $argv[3], '', (int)$port);
+  if ($mysql->connect_error) {
+    fwrite($stderr, "\n" . 'MySQL Connection Error: (' . $mysql->connect_errno . ') ' . $mysql->connect_error . "\n");
+    --$maxTries;
+    if ($maxTries <= 0) {
+      exit(1);
+    }
+    sleep(3);
+  }
+} while ($mysql->connect_error);
+if (!$mysql->query('CREATE DATABASE IF NOT EXISTS `' . $mysql->real_escape_string($argv[4]) . '`')) {
+  fwrite($stderr, "\n" . 'MySQL "CREATE DATABASE" Error: ' . $mysql->error . "\n");
+  $mysql->close();
+  exit(1);
+}
+$mysql->close();
+EOPHP
+
