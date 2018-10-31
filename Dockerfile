@@ -11,7 +11,7 @@ ENV SHOPWARE_DB_HOST=mysql \
 
 RUN \
   apt-get update && \
-  apt-get install -y unzip curl php7.1-apcu && \
+  apt-get install -y unzip curl php7.1-apcu jpegoptim optipng && \
   rm -rf /var/lib/apt/lists/* && \
   { \
       echo 'zend_extension = "/usr/lib/php/20160303/opcache.so"'; \
