@@ -29,7 +29,7 @@ RUN \
       echo 'apc.num_files_hint=8000'; \
       echo 'apc.ttl=3600'; \
   } > /etc/php/7.1/apache2/conf.d/10-apcu.ini && \
-  SHOPWARE_DOWNLOAD=$(curl -fsL http://en.community.shopware.com/_cat_725.html/ | grep -Eo 'http://releases.s3.shopware.com.s3.amazonaws.com/install_5.5.[0-9\.]+_[a-f0-9]+.zip' | sed 's/\.zip//' | sort -nr | uniq | head -1) && \
+  SHOPWARE_DOWNLOAD=$(curl -fsL http://en.community.shopware.com/_cat_725.html/ | egrep -o "https://.*install_5.5.[0-9\.]+_[a-f0-9]+.zip" | sed 's/\.zip//' | sort -nr | uniq | head -1) && \
   curl -fsL $SHOPWARE_DOWNLOAD.zip -o /usr/src/shopware.zip && \
   echo Downloaded $SHOPWARE_DOWNLOAD.zip && \
   chmod -R 755 /hooks /init && \
